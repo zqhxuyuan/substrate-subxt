@@ -496,6 +496,20 @@ mod tests {
 
     #[test]
     #[ignore] // requires locally running substrate node
+    fn test_tx_submit_and_watch_invalid_tx_fails_gracefully() {
+        let (mut rt, client) = test_setup();
+
+        let signer = AccountKeyring::Alice.pair();
+        let xt = rt.block_on(client.xt(signer, None)).unwrap();
+
+        let transfer =
+            xt.watch().submit(Call::new("Balances", "transfer", "Invalid PaYLoaD"));
+        let result = rt.block_on(transfer);
+        assert!(result.is_err())
+    }
+
+    #[test]
+    #[ignore] // requires locally running substrate node
     fn test_getting_hash() {
         let (mut rt, client) = test_setup();
         rt.block_on(client.block_hash(None)).unwrap();
