@@ -141,9 +141,8 @@ pub fn call<T: Contracts>(
 mod tests {
     use codec::{
         Codec,
-        Error as CodecError,
     };
-    use futures::Future;
+    use futures::{Future, future};
     use sp_core::Pair;
     use sp_keyring::AccountKeyring;
     use sp_runtime::traits::{
@@ -153,21 +152,19 @@ mod tests {
 
     use super::events;
     use crate::{
-        frame::contracts::MODULE,
+        frame::contracts::{Contracts, MODULE},
         tests::test_setup,
         Balances,
-        Client,
         DefaultNodeRuntime as Runtime,
         Error,
         System,
+        SystemEvent,
+        XtBuilder,
     };
 
-    type AccountId = <Runtime as System>::AccountId;
-
     fn put_code<T, P, S>(
-        client: &Client<T, S>,
-        signer: P,
-    ) -> impl Future<Item = Option<Result<T::Hash, CodecError>>, Error = Error>
+        xt: XtBuilder<T, P, S>,
+    ) -> impl Future<Item = T::Hash, Error = Error>
     where
         T: System + Balances + Send + Sync,
         T::Address: From<T::AccountId>,
@@ -185,11 +182,47 @@ mod tests {
 "#;
         let wasm = wabt::wat2wasm(CONTRACT).expect("invalid wabt");
 
-        client.xt(signer, None).and_then(|xt| {
-            xt.watch()
-                .submit(super::put_code(500_000, wasm))
-                .map(|result| result.find_event::<T::Hash>(MODULE, events::CODE_STORED))
-        })
+        xt.watch()
+            .submit(super::put_code(500_000, wasm))
+            .and_then(|result| {
+                let res = result.find_event::<T::Hash>(MODULE, events::CODE_STORED)
+                    .ok_or("Failed to find CodeStored event".into())
+                    .and_then(|x| x)
+                    .map_err(Into::into);
+                future::result(res)
+            })
+    }
+
+    fn instantiate<T, P, S>(
+        xt: XtBuilder<T, P, S>,
+        endowment: <T as Balances>::Balance,
+        code_hash: <T as System>::Hash,
+    ) -> impl Future<Item = (<T as System>::AccountId, <T as System>::AccountId) , Error = Error>
+        where
+            T: System + Balances + Contracts + Send + Sync,
+            T::Address: From<T::AccountId>,
+            P: Pair,
+            P::Signature: Codec,
+            S: 'static,
+            S: Verify + Codec + From<P::Signature>,
+            S::Signer: From<P::Public> + IdentifyAccount<AccountId = T::AccountId>,
+    {
+        xt.watch()
+            .submit(super::instantiate::<T>(
+                endowment,
+                500_000,
+                code_hash,
+                Vec::new(),
+            ))
+            .and_then(|result| {
+                let res = result.find_event::<(<T as System>::AccountId, <T as System>::AccountId)>(
+                    MODULE,
+                    events::INSTANTIATED,
+                ).ok_or("Failed to find CodeStored event".into())
+                    .and_then(|x| x)
+                    .map_err(Into::into);
+                future::result(res)
+            })
     }
 
     #[test]
@@ -198,16 +231,11 @@ mod tests {
         let (mut rt, client) = test_setup();
 
         let signer = AccountKeyring::Alice.pair();
-        let code_hash = rt.block_on(put_code(&client, signer)).unwrap();
+        let fut = client.xt(signer, None).and_then(move |xt| {
+            put_code(xt.clone())
+        });
 
-        assert!(
-            code_hash.is_some(),
-            "Contracts CodeStored event should be present"
-        );
-        assert!(
-            code_hash.unwrap().is_ok(),
-            "CodeStored Hash should decode successfully"
-        );
+        let _code_hash = rt.block_on(fut).unwrap();
     }
 
     #[test]
@@ -216,39 +244,51 @@ mod tests {
         let (mut rt, client) = test_setup();
 
         let signer = AccountKeyring::Alice.pair();
-        let code_hash = rt
-            .block_on(put_code(&client, signer.clone()))
-            .unwrap()
-            .unwrap()
-            .unwrap();
-
-        println!("{:?}", code_hash);
-
-        let instantiate = client.xt(signer, None).and_then(move |xt| {
-            xt.watch()
-                .submit(super::instantiate::<Runtime>(
-                    100_000_000_000_000,
-                    500_000,
-                    code_hash,
-                    Vec::new(),
-                ))
-                .map(|result| {
-                    result.find_event::<(AccountId, AccountId)>(
-                        MODULE,
-                        events::INSTANTIATED,
-                    )
-                })
+        let fut = client.xt(signer, None).and_then(move |xt| {
+            put_code(xt.clone()).and_then(move |code_hash| {
+                instantiate(xt.clone(), 1_000_000_000_000, code_hash)
+            })
         });
 
-        let result = rt.block_on(instantiate).unwrap();
+        let _contract_account = rt.block_on(fut).unwrap();
+    }
+
+    #[test]
+    #[ignore] // requires locally running substrate node
+    fn tx_call() {
+        let (mut rt, client) = test_setup();
+
+        let signer = AccountKeyring::Alice.pair();
+
+        let fut =
+            client.xt(signer, None).and_then(move |xt| {
+                put_code(xt.clone())
+                    .and_then(|code_hash| {
+//                        xt.increment_nonce();
+                        instantiate(xt.clone(), 1_000_000_000_000, code_hash)
+                            .and_then(|instantiate_result| {
+                                let (_, contract_account) = instantiate_result;
+//                                xt.increment_nonce();
+                                xt.watch()
+                                    .submit(super::call::<Runtime>(
+                                        contract_account.into(),
+                                        0,
+                                        500_000,
+                                        Vec::new(),
+                                    ))
+                            })
+                    })
+            });
+
+        let result = rt.block_on(fut).unwrap();
+        let extrinsic_success = result.system_events()
+            .iter()
+            .cloned()
+            .find(|evt| if let SystemEvent::ExtrinsicSuccess(_) = evt { true } else { false });
 
         assert!(
-            result.is_some(),
+            extrinsic_success.is_some(),
             "Contracts Instantiated event should be present"
-        );
-        assert!(
-            result.unwrap().is_ok(),
-            "Instantiated Event should decode successfully"
         );
     }
 }
