@@ -67,6 +67,7 @@ pub struct InstantiateArgs<T: Contracts> {
 #[derive(Encode)]
 pub struct CallArgs<T: Contracts> {
     dest: <T as System>::Address,
+    #[codec(compact)]
     value: <T as Balances>::Balance,
     #[codec(compact)]
     gas_limit: Gas,
@@ -265,10 +266,12 @@ mod tests {
             client.xt(signer, None).and_then(move |mut xt| {
                 put_code(xt.clone())
                     .and_then(|code_hash| {
+                        println!("code_hash: {:?}", code_hash);
                         xt.increment_nonce();
-                        instantiate(xt.clone(), 1_000_000_000_000_000, code_hash)
+                        instantiate(xt.clone(), 10_000_000_000_000_000_000, code_hash)
                             .and_then(|instantiate_result| {
                                 let (_, contract_account) = instantiate_result;
+                                println!("contract_account: {:?}", contract_account);
                                 xt.increment_nonce();
                                 xt.watch()
                                     .submit(super::call::<Runtime>(
