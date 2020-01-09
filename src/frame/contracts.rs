@@ -244,9 +244,10 @@ mod tests {
         let (mut rt, client) = test_setup();
 
         let signer = AccountKeyring::Alice.pair();
-        let fut = client.xt(signer, None).and_then(move |xt| {
+        let fut = client.xt(signer, None).and_then(move |mut xt| {
             put_code(xt.clone()).and_then(move |code_hash| {
-                instantiate(xt.clone(), 1_000_000_000_000, code_hash)
+                xt.increment_nonce();
+                instantiate(xt.clone(), 1_000_000_000_000_000, code_hash)
             })
         });
 
@@ -261,14 +262,14 @@ mod tests {
         let signer = AccountKeyring::Alice.pair();
 
         let fut =
-            client.xt(signer, None).and_then(move |xt| {
+            client.xt(signer, None).and_then(move |mut xt| {
                 put_code(xt.clone())
                     .and_then(|code_hash| {
-//                        xt.increment_nonce();
-                        instantiate(xt.clone(), 1_000_000_000_000, code_hash)
+                        xt.increment_nonce();
+                        instantiate(xt.clone(), 1_000_000_000_000_000, code_hash)
                             .and_then(|instantiate_result| {
                                 let (_, contract_account) = instantiate_result;
-//                                xt.increment_nonce();
+                                xt.increment_nonce();
                                 xt.watch()
                                     .submit(super::call::<Runtime>(
                                         contract_account.into(),
