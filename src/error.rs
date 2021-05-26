@@ -140,6 +140,8 @@ impl RuntimeError {
             DispatchError::ConsumerRemaining => Ok(Self::ConsumerRemaining),
             DispatchError::NoProviders => Ok(Self::NoProviders),
             DispatchError::Other(msg) => Ok(Self::Other(msg.into())),
+            DispatchError::Token(_) => Ok(Self::Other("Token error".into())),
+            DispatchError::Arithmetic(_) => Ok(Self::Other("Arithmetic error".into())),
         }
     }
 }
